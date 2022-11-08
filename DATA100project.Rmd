@@ -1,0 +1,385 @@
+---
+title: "DATA100 Group Project -- 2022 Fall"
+author: 
+date: "04/11/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# repos="https://utstat.toronto.edu/cran/"
+library(tidyverse)
+library(lubridate)
+library(readxl)
+library(maps)
+```
+
+
+# Project introduction
+
+In the recent years, natural disasters are more and more prominently in the news stories, despite (or because) of the constant human struggles. Many regard them as symptoms of climate change due to human actions, while some think they are just climate doing what it has been doing -- variations, and still many focus on if the population is (un)able to adjust to it. Many believes that humans are exacerbating the changes of climate, while others feel there is nothing that cannot be explained by coincidences of natural factors.
+
+This project will ask you to try and connect some dots in this topic. The main goal of this project is to go through the exploratory data analysis, and some modelling to understand as much as possible what the stories the data sets available might tell with the tools available.
+
+The theme of the story that we would like to understand is the following: 
+
+**How does human action / opinion / feelings relate to climate**. 
+
+We are not seeking to decipher the cause and effect on this issue. *Relation* is a very loose notion, which of course have the cause-effect as a special case. Things could be related but not causing each other.
+
+The data are mostly from online sources, which may not be tidy as is. Part of the job is to clean-up the data so that they becomes tidy, before proceed to plot, join, and model them, using techniques we have studied in this course. The report would contain the interpretation of the result you obtain and try to build a coherent story based on the data analysis that you will carry out.
+
+It is also completely reasonable that, from the data sets we have, it may appear that some factors do not correlate much to the climate -- which is also knowledge gained.
+
+In the following, we provide some data sets concerning a number of potential factors of interest, such as *sea ice*, *hurricane*, *energy use*, *opinions on climate*, and *COVID* data. We included also two sets of data concerning United States, in terms of the distribution of population affected by drought as well as the so-called social capital. They can be roughly classified into *climate*, *social* and *other* factors. As you will see, a number of them are not up-to-date, which is due to the availability of timely data -- most of the interesting current data are not open data, or not easy to locate in more readily useful form to us. Most of these data are from online sources, and you are encouraged to track the most up-to-date version. We included the *WorldRegions.csv* data from World Regions Classification list on Wikipedia.
+
+Also included are the data *WorldHappinessReport2022-Score.csv* from the World Happiness Report `2022`, which concerns the years `2018-2020`. It is computed based on the answers of people to the following question: “Please imagine a ladder, with steps numbered from 0 at the bottom to 10 at the top. The top of the ladder represents the best possible life for you and the bottom of the ladder represents the worst possible life for you. On which step of the ladder would you say you personally feel you stand at this time?” ([Statistical Appendix 1 for Chapter 2](https://happiness-report.s3.amazonaws.com/2022/Appendix_1_StatiscalAppendix_Ch2.pdf) of [World Health Report 2022](https://worldhappiness.report/ed/2022/)) Thus, the score can be seen as giving one interpretation of happiness.
+
+## Using Map
+
+A map can be a useful way of presenting data with geographical information. As an example, the map below shows the `new cases` on Nov. 01, 2022 obtained from [Our world in data](https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/owid-covid-data.csv). 
+
+```{r include=FALSE}
+COVID_cases <- read_csv("COVID-2022-11-01.csv",
+                        col_types = cols(
+                          location = col_character(),
+                          new_cases = col_double(),
+                          total_cases = col_double()
+                        ))
+```
+
+```{r echo=FALSE, warning=FALSE}
+world <- map_data("world")
+
+iu <- COVID_cases %>% rename (region = location)
+
+ # to match world map data, see comments below
+iu$region[42] <- "Republic of Congo"
+iu$region[44] <- "Ivory Coast"
+iu$region[48] <- "Czech Republic"
+iu$region[49] <- "Democratic Republic of the Congo"
+iu$region[64] <- "Faroe Islands"
+iu$region[128] <- "Micronesia"
+iu$region[194] <- "Timor"
+iu$region[203] <- "UK"
+iu$region[204] <- "USA"
+
+iu <- semi_join(iu, world, by = "region") #only keep countries according to world map data
+
+# code below is modified from 
+# https://stackoverflow.com/questions/29614972/ggplot-us-state-map-colors-are-fine-polygons-jagged-r
+gg <- ggplot()
+
+gg <- gg + geom_map(
+  data = world,
+  map = world,
+  aes(x = long, y = lat, map_id = region),
+  fill = "#ffffff",
+  color = "#ffffff",
+  size = 0.20
+  )
+  
+  gg <- gg + geom_map(
+  data = iu,
+  map = world,
+  aes(fill = new_cases, map_id = region),
+  color = "#ffffff",
+  size = 0.15
+  )
+  
+  gg <- gg + scale_fill_continuous(low = 'thistle2', high = 'darkblue',
+  guide = 'colorbar')
+  gg
+```
+
+Sometimes, different data sets use different names for the same region / country. You may run the code block below (and remove the `include=FALSE` option) to see the mismatch between some names of the (same) regions in the two data sets `world` and `COVID_cases`. It means that the `semi_join` performed above showing the map is not exactly perfect. Adaptation to `iu$region` was made in the plot above, while there are still some that are not dealt with, e.g. `Antigua and Barbuda` is one row in `COVID_cases`, while two rows are used in `world` map data. Similar issues might affect other data sets provided and you may need to manually change some of them so that they have the same names throughout.
+
+```{r}
+world %>% distinct(region) %>% anti_join(COVID_cases, by = c("region" = "location"))
+COVID_cases %>% distinct(location) %>% anti_join(world, by = c("location" = "region"))
+```
+
+# The Setup:
+
+All data are gleaned from online sources. Some are in the form of Excel spreadsheets, which need to be read using `read_excel`. Examples are given in the code below on how to get data from a particular sheet. **Note** For Excel data, you should include code to load the spreadsheets and save the sheets that you intend to use in your analysis as separate `.csv` files in the beginning of your RMD file.
+
+There are a total of **9** data collections as described below, **2** of which are online real-time data sets that are regularly updated, while the remaining **7** can be obtained as `csv` files on MyLS. You may need to make the data tidy for some of them. Please note that the data sets are from different sources, you may need to first make sure, for example, the country / region names provided indeed do correspond.
+
+Aside from `regionclassification`, you must use data from at least `4` collections provided below. Provide brief description on the choice of data sets included in your project. Each collection contains more than one sets of data and different groups may work on different data even when choosing the same collections. You are encouraged to discuss among groups, while each group should work their own analysis and write their own report.
+
+You can look at other data sets that are not provided below for inspirations and ideas. You *should not* include data from other sources in your report.
+
+# The Questions:
+
+- Based on the interpretation of your group, analyze how the current / changing climate situation relate to the various factors, or among themselves. The relationship can be in terms of potential causes, potential effects, or simply correlations. Make your arguments as clear as possible with the help of the data you choose to analyze. If two factors are shown to be not really related, that is also knowledge.
+
+- Find *one* online article discussing how climate affects / is affected by communities / populations. Discuss if any analysis you have done in the project can be used to *counter* or *strengthen* the main arguments presented in the article.
+
+# The Data sets
+
+The sources of the data are contained in the hyperlink. They are the following:
+
+- Our World in Data: from which we obtain the online data sets on COVID-19 cases, vaccinations and testing
+- Wikipedia: from which we obtained the World Regions Classification data set, aside from the democracy index mentioned above
+- Meta (formerly Facebook): from which we obtained the data on climate opinions as well as U.S. social capital distribution.
+- Various U.S. agencies / collaborations: from which the rest of climate data are obtained.
+
+#### Datasets contained in project files, as `.csv` or `.xlsx`
+
+- `regionclassification`: [World Regions Classification](https://meta.wikimedia.org/wiki/List_of_countries_by_regional_classification)
+```{r include=FALSE}
+regionclassification <- read_tsv("WorldRegions.csv")
+regionclassification %>% head()
+spec(regionclassification)
+```
+
+- `happinessscore`: [World happiness report 2022, happiness score](https://worldhappiness.report/ed/2022/)
+```{r include=FALSE}
+happinessscore <- read_csv("WorldHappinessReport2022-Score.csv")
+happinessscore %>% head()
+
+
+#plot the happiness score around the world
+iu <- happinessscore %>% rename (region = Country, happiness_score= `Happiness score`)
+iu <- semi_join(iu, world, by = "region") #only keep countries according to world map data
+
+#function to plot a map given the world map, a dataframe: iu with regions and a numeric variable, var2 in the dataframe
+plot_map <- function(iu,world,var2, title="") {
+  gg <- ggplot()
+
+  gg <- gg + geom_map(
+    data = world,
+    map = world,
+    aes(x = long, y = lat, map_id = region),
+    fill = "#ffffff",
+    color = "#ffffff",
+    size = 0.20
+    )
+    
+    gg <- gg + geom_map(
+    data = iu,
+    map = world,
+    aes(fill = {{var2}}, map_id = region),
+    color = "#ffffff",
+    size = 0.15
+    )
+    
+    gg <- gg + scale_fill_continuous(low = 'thistle2', high = 'darkblue',
+    guide = 'colorbar') + labs(title = title)
+    gg
+}
+plot_map(iu, world, happiness_score)
+
+```
+
+- Most recent cyclone data from [NOAA](https://www.nhc.noaa.gov/data/hurdat). There are two data sets:
+  + [Atlantic](https://www.nhc.noaa.gov/data/hurdat/hurdat2-1851-2021-100522.txt)
+  + [Pacific](https://www.nhc.noaa.gov/data/hurdat/hurdat2-nepac-1949-2021-091522.txt)
+
+The updated data descriptions for them are respectively at
+
+  + [Atlantic](https://www.nhc.noaa.gov/data/hurdat/hurdat2-format-atl-1851-2021.pdf)
+  + [Pacific](https://www.nhc.noaa.gov/data/hurdat/hurdat2-format-nencpac-1949-2021.pdf)
+  
+We also discussed cleaning them up and making them more useful in the lectures (`Lecture-08-01.Rmd`).
+
+```{r include=FALSE}
+# code copied from Lecture-08-01.Rmd
+cyclone_data_address <- "https://www.nhc.noaa.gov/data/hurdat/hurdat2-1851-2021-100522.txt"
+cyclone_2021_raw <- 
+  read_csv(cyclone_data_address,
+           col_names = c(as.character(1:4))) %>%
+  separate(`4`, into = c(as.character(4:21)), sep = ", ") %>%
+  mutate(across(everything(), ~na_if(.,"-999"))) %>%
+  mutate(across(everything(), ~na_if(.,"-99")))
+
+cyclone_2021_raw %>% head()
+
+cyclone_cleaned_address <- "hurdat2-1851-2021-041922.csv"
+cyclone_cleaned <- read_csv(cyclone_cleaned_address)
+
+
+```
+
+- `Sea ice index` data from [National Snow and Ice Datacenter](https://nsidc.org/data/seaice_index/data-and-image-archive). They include two spreadsheet files:
+
+  + `Sea_Ice_Index_Monthly_Data_by_Year_G02135_v3.0.xlsx`
+  + `Sea_Ice_Index_Rates_of_Change_G02135_v3.0.xlsx`
+
+You should be able to load the individual sheets in the files using the format below. In particular, the sheets in the file `Sea_Ice_Index_Monthly_Data_by_Year_G02135_v3.0.xlsx` are:
+
+    + "NH-Extent", 
+    + "NH-Area", 
+    + "SH-Extent", 
+    + "SH-Area"
+    
+The sheets in the file `Sea_Ice_Index_Rates_of_Change_G02135_v3.0.xlsx` are:
+
+    + "NH-Ice-Change-Mkm^2-per-Month",
+    + "NH-Ice-Change-km^2-per-Day",
+    + "NH-Ice-Change-mi^2-per-Month",
+    + "NH-Ice-Change-mi^2-per-Day",
+    + "SH-Ice-Change-Mkm^2-per-Month",
+    + "SH-Ice-Change-km^2-per-Day", 
+    + "SH-Ice-Change-mi^2-per-Month",
+    + "SH-Ice-Change-mi^2-per-Day"
+
+Furthermore, the file
+
+    "Sea_Ice_documentation.xlsx"
+
+contains the description / meta-data for the data sheets above.
+
+**Note**: It might be necessary to skip the first (few) rows in a sheet, just like what could happen with reading `.csv` files correctly using `read_csv`. Also, the resulting dataframes are mostly *not tidy*. You may need to tidy them first.
+
+```{r include=FALSE}
+Sea_Ice_Data_file <- "Sea_Ice_Index_Monthly_Data_by_Year_G02135_v3.0.xlsx"
+Sea_Ice_Change_file <- "Sea_Ice_Index_Rates_of_Change_G02135_v3.0.xlsx"
+
+NH_Extent <- read_excel(Sea_Ice_Data_file, sheet = "NH-Extent")
+NH_Area <- read_excel(Sea_Ice_Data_file, sheet = "NH-Area")
+NH_Change_by_day <- read_excel(Sea_Ice_Change_file, sheet = "NH-Ice-Change-km^2-per-Day", skip = 1)
+
+NH_Extent %>% head()
+NH_Change_by_day %>% head()
+
+#drop 2022 and 1978 because observations are incomplete and thereby innacurate
+colors <- c("Area" = "#00AFBB", "Extent" = "#CC79A7")
+ggplot() + geom_line(data = filter(NH_Extent, ...1 !=1978, ...1 !=2022), aes(x= ...1, y=Annual, color = "Extent")) + geom_line(data = filter(NH_Area, ...1 !=1978, ...1 !=2022), aes(x= ...1, y=Annual, color="Area")) +
+    labs(y = element_blank(), x = "year",
+         title = "NH: weighted average monthly sea ice extent and area for each year", 
+         color = "Legend") +
+    scale_color_manual(values = colors)
+
+
+```
+
+- `climate_opinions` data from Meta (formerly Facebook), hosted on [HDX humdata.org](https://data.humdata.org/dataset/climate-change-opinion-survey)
+There are a number of sheets in the excel file `climate_change_opinion_survey_aggregated_06252021.xlsx` included in the project files. They are
+    
+    + "climate_awareness",
+    + "climate_happening",
+    + "climate_beliefs",
+    + "climate_worry",
+    + "harm_personally",
+    + "harm_future_gen",
+    + "climate_importance",
+    + "gov_priority", 
+    + "gov_more_less",
+    + "paris_support_oppose",
+    + "economic_impact",
+    + "renewable_more_less",
+    + "fossil_more_less",
+    + "climate_action",
+    + "climate_info",
+    + "ideology_us",
+    + "ideology_row",
+    + "partyid_us"
+
+You should be able to use the format below to access each of the sheets. Furthermore, the file
+
+    "climate_change_opinion_survey_aggregated_06252021_description.xlsx"
+    
+contains the description / meta-data for the data sheets. Again, the resulting dataframes are mostly *not tidy*. You may need to tidy them first.
+
+```{r include=FALSE}
+climate_change_opinion_file <- "climate_change_opinion_survey_aggregated_06252021.xlsx"
+climate_happening <- read_excel(climate_change_opinion_file, sheet = "climate_happening")
+climate_beliefs <- read_excel(climate_change_opinion_file, sheet = "climate_beliefs")
+
+
+climate_happening %>% head()
+climate_beliefs %>% head()
+# etc..
+
+```
+
+- International energy usage, including import and export, information, from [U.S. Energy Information Administration](https://www.eia.gov/international/data/world). They are contained in a number of files:
+
+    + `INT-Export-BioFuel-09-09-2022_22-28-53.csv`
+    + `INT-Export-CoalCoke-09-09-2022_23-09-12.csv`
+    + `INT-Export-Electricity-09-09-2022_23-11-57.csv`
+    + `INT-Export-Emissions-09-09-2022_23-18-25.csv`
+    + `INT-Export-HydroCarbonLiquids-09-09-2022_23-14-09.csv`
+    + `INT-Export-NaturalGas-09-09-2022_23-11-09.csv`
+    + `INT-Export-PetroLiquids-09-09-2022_23-10-18.csv`
+    + `INT-Export-PrimaryEnergy-09-09-2022_23-12-37.csv`
+
+each pertaining to a particular class of energy source. You may want to write a simple function to load these files by their respective names, as they follow a common format. Again, the resulting dataframes are mostly *not tidy*. You may need to tidy them first.
+
+- Reading the API Ex: INTL.81-1-NAM-MT.A
+  - NAM is the respective country ISO code (see: https://en.wikipedia.org/wiki/ISO_3166-1_alpha-3) 
+  
+```{r include=FALSE}
+# Example loading the BioFuel data
+BioFuel_file <- "INT-Export-BioFuel-09-09-2022_22-28-53.csv"
+BioFuel_usage <- read_csv(BioFuel_file, skip = 1) %>% mutate(across(!c(API, `...2`), ~as.numeric(.)))
+BioFuel_usage %>% head()
+
+
+
+tidied_biofuel <- BioFuel_usage %>%
+  mutate(
+    region = ifelse(is.na(`API`), `...2`, NA)) %>% 
+  select(region, everything()) %>%
+  fill(region) %>% filter(!is.na(API)) %>%
+  rename (type = `...2`)
+
+
+```
+### Biofuel consumption graphs
+- The data has lots of NA values especially in earlier years- this messes with accuracy of info 
+
+```{r}
+sapply(tidied_biofuel, function(x) sum(is.na(x)))#see NAs
+
+#change country names in tidied_biofuel to match those in world 
+iu <- tidied_biofuel %>% mutate(region = str_replace_all(region, c("United States"="USA", "United Kingdom"= "UK")) %>% filter(str_detect(region,"^[uU]") == TRUE )
+
+iu$region[42] <- "Republic of Congo"
+iu$region[44] <- "Ivory Coast"
+iu$region[48] <- "Czech Republic"
+iu$region[49] <- "Democratic Republic of the Congo"
+iu$region[64] <- "Faroe Islands"
+iu$region[128] <- "Micronesia"
+iu$region[194] <- "Timor"
+iu$region[203] <- "UK"
+iu$region[204] <- "USA"
+
+#graphs 
+iu <- semi_join(tidied_biofuel %>%  
+                  filter(type == "Consumption (Mmt)") %>% 
+                  select(region, `2018`), world, by = "region") #only keep countries according to world map data
+
+
+
+
+
+plot_map(iu, world, `2018`, title="2018 biofuel consumption")
+
+temp_biofuel <- tidied_biofuel %>% 
+  filter(type == "Consumption (Mmt)") %>% 
+  subset(select = -c(`API`) ) %>% 
+  pivot_longer(cols=c(-1,-2), names_to="year", values_to="consumption")
+temp_biofuel$region <- as.factor(temp_biofuel$region)
+
+temp_biofuel %>% filter(region == "World") %>% ggplot() + geom_point(mapping=aes(x=year, y=consumption)) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) + labs(title="world biofuel consumption by year")
+
+#join was being problematic without remporarily renaming column to match 
+temp_biofuel2 <-temp_biofuel %>% rename("Country" = "region") %>% inner_join(regionclassification)
+temp_biofuel2$Region = as.factor(temp_biofuel2$Region)
+
+
+temp_biofuel2 %>% 
+  group_by(Region, year) %>% 
+  summarise(avg_cons = mean(consumption, na.rm=TRUE, .groups= "drop")) %>% ggplot(mapping=aes(x=year, y=avg_cons)) + geom_point() + facet_wrap(~Region) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) + labs(title="avg biofuel consumption by region by year")
+
+
+#graph below shows that there are some gaps in the data. Ex: zimbabwe seems to have a higher consumption compared to other African counties but during the years 1992-2013, the consumption is marked as 0 - is this an error or is there a reason?
+temp_biofuel2 %>% filter(Region == "Africa" & consumption > 0) %>% group_by(year) %>% ggplot(mapping=aes(x=year, y=consumption, color=Country)) + geom_jitter() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) + labs(title="Africa: countries with biofuel consumption > 0 by year")
+
+temp_biofuel2 %>% filter(Region == "North America" & consumption > 0) %>% group_by(year) %>% ggplot(mapping=aes(x=year, y=consumption, color=Country)) + geom_jitter() + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) + labs(title="North America: countries with biofuel consumption > 0 by year")
+```
+
